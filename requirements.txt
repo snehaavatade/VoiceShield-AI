@@ -1,0 +1,9 @@
+
+streamlit==1.67.0
+pandas
+numpy
+librosa
+torch==2.6.0
+torchaudio==2.6.0
+transformers
+imageio-ffmpeg

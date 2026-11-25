@@ -1,0 +1,12 @@
+
+.venv/
+__pycache__/
+*.pyc
+datasets/
+.cache/
+huggingface/
+*.log
+
+models/*.csv
+models/voiceshield_cnn.pth
+models/voiceshield_cnn_v1_backup.pth

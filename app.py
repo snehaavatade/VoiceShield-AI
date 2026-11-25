@@ -4,7 +4,6 @@ import streamlit.components.v1 as components
 import pandas as pd
 
 from datetime import datetime
-
 from detector import analyze_audio
 
 
@@ -105,20 +104,59 @@ hr {
 
 
 # ============================================================
-# REUSABLE FUNCTIONS
+# SCORE ANALYSIS
+# ============================================================
+
+def get_score_strength(result):
+
+    ai_score = float(result["ai_score"])
+    human_score = float(result["human_score"])
+
+    margin = abs(ai_score - human_score) * 100
+
+    if margin >= 30:
+        strength = "Strong model preference"
+        explanation = (
+            "The model gives a clear preference to one class."
+        )
+
+    elif margin >= 15:
+        strength = "Moderate model preference"
+        explanation = (
+            "The model favours one class, but the scores are "
+            "not widely separated."
+        )
+
+    else:
+        strength = "Close scores"
+        explanation = (
+            "The model scores are relatively close. "
+            "Its prediction should be treated cautiously."
+        )
+
+    return {
+        "margin": margin,
+        "strength": strength,
+        "explanation": explanation
+    }
+
+
+# ============================================================
+# MODEL RESULT CARD
 # ============================================================
 
 def display_model_result(model_name, description, result):
 
-    ai_score = result["ai_score"] * 100
-    human_score = result["human_score"] * 100
+    ai_score = float(result["ai_score"]) * 100
+    human_score = float(result["human_score"]) * 100
 
     prediction = result["prediction"]
+
+    score_info = get_score_strength(result)
 
     with st.container(border=True):
 
         st.subheader(model_name)
-
         st.caption(description)
 
         if prediction == "AI Generated":
@@ -146,57 +184,148 @@ def display_model_result(model_name, description, result):
         st.write("Human Voice Score")
         st.progress(max(0.0, min(1.0, human_score / 100)))
 
+        st.divider()
+
+        st.markdown("**Model Score Strength**")
+
+        st.info(
+            f"{score_info['strength']}\n\n"
+            f"Score difference: {score_info['margin']:.2f} percentage points"
+        )
+
+        st.caption(score_info["explanation"])
+
+
+# ============================================================
+# ADVANCED OVERALL ASSESSMENT
+# ============================================================
 
 def display_assessment(results):
 
     cnn = results["cnn_v2"]
     wav2vec = results["wav2vec2"]
 
-    agreement = results["agreement"]
+    agreement = (
+        cnn["prediction"] == wav2vec["prediction"]
+    )
+
+    cnn_info = get_score_strength(cnn)
+    wav_info = get_score_strength(wav2vec)
 
     st.subheader("Overall Detection Assessment")
 
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric(
+            "CNN V2 Score Difference",
+            f"{cnn_info['margin']:.2f} pp"
+        )
+
+    with col2:
+        st.metric(
+            "Wav2Vec2 Score Difference",
+            f"{wav_info['margin']:.2f} pp"
+        )
+
+    st.divider()
+
     if not agreement:
 
+        st.error(
+            "MODEL DISAGREEMENT — INCONCLUSIVE RESULT"
+        )
+
         st.warning(
-            "⚠️ MODEL DISAGREEMENT\n\n"
-            "The two models produced different predictions. "
-            "Additional verification is recommended."
+            "The two detection models produced different predictions. "
+            "VoiceShield cannot confidently determine the nature of "
+            "this recording from these conflicting outputs."
         )
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.write("**CNN V2**")
+            st.markdown("**CNN V2**")
             st.write(cnn["prediction"])
 
         with col2:
-            st.write("**Wav2Vec2**")
+            st.markdown("**Wav2Vec2**")
             st.write(wav2vec["prediction"])
 
-    elif cnn["prediction"] == "AI Generated":
-
-        st.error(
-            "⚠️ SUSPICIOUS AUDIO SIGNAL\n\n"
-            "Both models classify this recording as AI-generated. "
-            "Treat the recording cautiously and verify its source."
+        st.info(
+            "Recommended action: Verify the speaker through a trusted "
+            "phone number or another independent communication channel."
         )
 
     else:
 
-        st.success(
-            "✓ HUMAN-LIKE AUDIO SIGNAL\n\n"
-            "Both models classify this recording as human-like. "
-            "This does not prove that the recording is authentic."
-        )
+        if cnn["prediction"] == "AI Generated":
+
+            st.warning(
+                "BOTH MODELS DETECT AN AI-GENERATED VOICE SIGNAL"
+            )
+
+            st.write(
+                "Both models classify this recording as AI-generated. "
+                "Treat it as suspicious and independently verify "
+                "the source before trusting it."
+            )
+
+        else:
+
+            st.success(
+                "BOTH MODELS DETECT A HUMAN-LIKE VOICE SIGNAL"
+            )
+
+            st.write(
+                "Both models classify this recording as human-like. "
+                "However, agreement does not prove that the recording "
+                "is authentic or has not been manipulated."
+            )
+
+    st.divider()
+
+    st.markdown("**How to interpret this assessment**")
+
+    st.markdown("""
+    - **Agreement:** Both models produce the same classification.
+    - **Disagreement:** The models produce different classifications.
+    - **Strong model preference:** A larger difference between AI and
+      Human scores.
+    - **Close scores:** A smaller difference between AI and Human scores.
+    """)
 
     st.caption(
-        "Model agreement does not guarantee correctness. "
-        "Confidence scores are not calibrated probabilities."
+        "Score strength is based on the difference between the two "
+        "model scores. It is not calibrated confidence, accuracy, "
+        "or a verified probability of authenticity."
     )
 
 
+# ============================================================
+# HISTORY ENTRY
+# ============================================================
+
 def create_history_entry(filename, results):
+
+    cnn = results["cnn_v2"]
+    wav = results["wav2vec2"]
+
+    cnn_info = get_score_strength(cnn)
+    wav_info = get_score_strength(wav)
+
+    agreement = (
+        cnn["prediction"] == wav["prediction"]
+    )
+
+    if not agreement:
+        assessment = "Inconclusive - Disagreement"
+
+    elif cnn["prediction"] == "AI Generated":
+        assessment = "AI Signal - Both Models"
+
+    else:
+        assessment = "Human-like - Both Models"
 
     return {
         "Date & Time": datetime.now().strftime(
@@ -205,25 +334,29 @@ def create_history_entry(filename, results):
 
         "Audio File": filename,
 
-        "CNN V2 Prediction": (
-            results["cnn_v2"]["prediction"]
-        ),
+        "CNN V2 Prediction": cnn["prediction"],
 
         "CNN V2 AI Score (%)": round(
-            results["cnn_v2"]["ai_score"] * 100, 2
+            cnn["ai_score"] * 100, 2
         ),
 
-        "Wav2Vec2 Prediction": (
-            results["wav2vec2"]["prediction"]
+        "CNN V2 Score Difference (%)": round(
+            cnn_info["margin"], 2
         ),
+
+        "Wav2Vec2 Prediction": wav["prediction"],
 
         "Wav2Vec2 AI Score (%)": round(
-            results["wav2vec2"]["ai_score"] * 100, 2
+            wav["ai_score"] * 100, 2
         ),
 
-        "Models Agree": (
-            "Yes" if results["agreement"] else "No"
-        )
+        "Wav2Vec2 Score Difference (%)": round(
+            wav_info["margin"], 2
+        ),
+
+        "Models Agree": "Yes" if agreement else "No",
+
+        "Overall Assessment": assessment
     }
 
 
@@ -255,8 +388,10 @@ with st.sidebar:
     - Audio analysis
     - Dual-model comparison
     - AI voice detection
-    - Confidence comparison
+    - Score strength analysis
+    - Agreement and disagreement detection
     - Prediction history
+    - CSV reports
     - Security recommendations
     """)
 
@@ -288,9 +423,9 @@ st.markdown(
 st.divider()
 
 st.info(
-    "VoiceShield compares two AI detection models. "
-    "Results are estimates, not proof that a voice is genuine "
-    "or cloned. Always verify sensitive requests independently."
+    "VoiceShield compares two independent AI detection models. "
+    "Their predictions are estimates, not proof that a voice is "
+    "genuine or cloned. Always verify sensitive requests independently."
 )
 
 
@@ -322,12 +457,8 @@ with tab1:
     audio_file = st.file_uploader(
         "Choose an audio recording",
         type=[
-            "wav",
-            "mp3",
-            "ogg",
-            "m4a",
-            "flac",
-            "webm"
+            "wav", "mp3", "ogg",
+            "m4a", "flac", "webm"
         ],
         key="audio_upload"
     )
@@ -351,10 +482,7 @@ with tab1:
         with col2:
             extension = audio_file.name.split(".")[-1].upper()
 
-            st.metric(
-                "File Format",
-                extension
-            )
+            st.metric("File Format", extension)
 
         if st.button(
             "🚀 Analyze with Both Models",
@@ -382,10 +510,7 @@ with tab1:
                     results
                 )
 
-                st.session_state.history.insert(
-                    0,
-                    entry
-                )
+                st.session_state.history.insert(0, entry)
 
                 st.success(
                     "Both models completed their analysis!"
@@ -397,7 +522,8 @@ with tab1:
                     f"Audio analysis failed: {error}"
                 )
 
-    # Display the latest result
+    # Display latest analysis
+
     if st.session_state.analysis_result is not None:
 
         results = st.session_state.analysis_result
@@ -434,10 +560,7 @@ with tab1:
 
         comparison_df = pd.DataFrame({
 
-            "Model": [
-                "CNN V2",
-                "Wav2Vec2"
-            ],
+            "Model": ["CNN V2", "Wav2Vec2"],
 
             "AI Generated": [
                 results["cnn_v2"]["ai_score"] * 100,
@@ -459,10 +582,43 @@ with tab1:
 
         display_assessment(results)
 
+        st.divider()
+
+        st.subheader("Technical Analysis Summary")
+
+        summary_df = pd.DataFrame({
+
+            "Parameter": [
+                "CNN V2 Prediction",
+                "Wav2Vec2 Prediction",
+                "CNN V2 Score Strength",
+                "Wav2Vec2 Score Strength",
+                "Model Agreement"
+            ],
+
+            "Result": [
+                results["cnn_v2"]["prediction"],
+                results["wav2vec2"]["prediction"],
+                get_score_strength(results["cnn_v2"])["strength"],
+                get_score_strength(results["wav2vec2"])["strength"],
+                "Yes" if (
+                    results["cnn_v2"]["prediction"]
+                    == results["wav2vec2"]["prediction"]
+                ) else "No"
+            ]
+
+        })
+
+        st.dataframe(
+            summary_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
         st.caption(
-            "These scores are model outputs, not calibrated probabilities. "
-            "They should not be interpreted as a guaranteed measure "
-            "of voice authenticity."
+            "The displayed scores are model outputs, not calibrated "
+            "probabilities. Score strength describes the separation "
+            "between AI and Human scores, not model correctness."
         )
 
 
@@ -663,13 +819,13 @@ with tab3:
         with col2:
 
             suspicious = sum(
-                row["CNN V2 Prediction"] == "AI Generated"
-                or row["Wav2Vec2 Prediction"] == "AI Generated"
+                row["Overall Assessment"]
+                == "AI Signal - Both Models"
                 for row in history
             )
 
             st.metric(
-                "Analyses with AI Signal",
+                "Agreed AI Signals",
                 suspicious
             )
 
@@ -711,9 +867,7 @@ with tab3:
         ):
 
             st.session_state.history = []
-
             st.session_state.analysis_result = None
-
             st.session_state.analysis_filename = None
 
             st.rerun()
@@ -776,8 +930,8 @@ with tab4:
     2. **Preprocessing:** Audio is converted into mono 16 kHz format.
     3. **CNN V2:** A custom-trained CNN analyzes Mel-spectrogram features.
     4. **Wav2Vec2:** A pretrained audio model analyzes the recording.
-    5. **Comparison:** Both model predictions and scores are compared.
-    6. **Assessment:** VoiceShield presents the results and recommends verification.
+    5. **Comparison:** Both model predictions and score differences are compared.
+    6. **Assessment:** VoiceShield presents results and recommends verification.
     """)
 
     st.success(
